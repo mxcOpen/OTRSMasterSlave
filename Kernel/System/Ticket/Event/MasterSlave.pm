@@ -170,6 +170,13 @@ sub Run {
         # just a flag for know when the first slave ticket is present
         my $FirstSlaveTicket = 1;
         my $TmpArticleBody;
+        # ---
+        # TimP@mxc
+        # ---
+        my $HTMLBodyAttachmentID;
+        my $OriginalCharset;
+        my $TmpHTMLArticleBody;
+        # ---
 
         # Get attachments in master for usage in slave tickets (see bug#14983).
         my %AttachmentIndex = $ArticleBackendObject->ArticleAttachmentIndex(
@@ -314,11 +321,50 @@ sub Run {
                 if ($FirstSlaveTicket) {
                     $FirstSlaveTicket = 0;
                     $TmpArticleBody   = $Article{Body};
+
+                    # ---
+                    # TimP@mxc
+                    # ---
+                    my $LayoutObject = $Kernel::OM->Get('Kernel::Output::HTML::Layout');
+                    $HTMLBodyAttachmentID = $Kernel::OM->Get('Kernel::Output::HTML::Article::MIMEBase')->HTMLBodyAttachmentIDGet(
+                        TicketID   => $Param{Data}->{TicketID},
+                        ArticleID  => $Article{ArticleID},
+                    );
+
+
+                    if ( $HTMLBodyAttachmentID ) {
+                        # Preview doesn't include inline images...
+                        my %Data = $ArticleBackendObject->ArticleAttachment(
+                            ArticleID => $Article{ArticleID},
+                            FileID    => $HTMLBodyAttachmentID,
+                        );
+
+                        # Get the charset directly from the attachment hash and convert content to the internal charset (utf-8).
+                        #   Please see bug#13367 for more information.
+                        if ( $Data{ContentType} =~ m/.+?charset=("|'|)(?<Charset>.+)/ig ) {
+                            $OriginalCharset = $+{Charset};
+                            $OriginalCharset =~ s/"|'//g;
+                        }
+                        else {
+                            $OriginalCharset = 'us-ascii';
+                        }
+
+                        $TmpHTMLArticleBody = $Data{Content};
+                    }
+                    # ---
                 }
                 else {
                     # get body from temporal in oder to get it
                     # without changes from previous slave tickets
                     $Article{Body} = $TmpArticleBody;
+
+                    # ---
+                    # TimP@mxc
+                    # ---
+                    if ( $HTMLBodyAttachmentID ) {
+                        $Attachments[$HTMLBodyAttachmentID-1]->{Content} = $TmpHTMLArticleBody;
+                    }
+                    # ---
                 }
 
                 my $Search = $CustomerUserObject->CustomerName(
@@ -329,6 +375,30 @@ sub Run {
                 ) || '';
                 if ( $Search && $Replace ) {
                     $Article{Body} =~ s{ \Q$Search\E }{$Replace}xmsg;
+
+                    # ---
+                    # TimP@mxc
+                    # ---
+                    # replace in the html body
+                    if ( $HTMLBodyAttachmentID ) {
+
+                        $Attachments[$HTMLBodyAttachmentID-1]->{Content} = $Kernel::OM->Get('Kernel::System::Encode')->Convert(
+                            Text  => $Attachments[$HTMLBodyAttachmentID-1]->{Content},
+                            From  => $OriginalCharset,
+                            To    => 'utf-8',
+                            Check => 1,
+                        );
+
+                        $Attachments[$HTMLBodyAttachmentID-1]->{Content} =~ s{ \Q$Search\E }{$Replace}xmsg;
+
+                        $Attachments[$HTMLBodyAttachmentID-1]->{Content} = $Kernel::OM->Get('Kernel::System::Encode')->Convert(
+                            Text  => $Attachments[$HTMLBodyAttachmentID-1]->{Content},
+                            From  => 'utf-8',
+                            To    => $OriginalCharset,
+                            Check => 1,
+                        );
+                    }
+                    # ---
                 }
             }
 
